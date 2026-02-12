@@ -5,8 +5,9 @@ import asyncio
 import json
 from bs4 import BeautifulSoup
 
+# ------------------- Zmienne środowiskowe -------------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # możesz tu później dodać listę kanałów, jeśli chcesz
 
 URL = "https://cyleria.pl/?subtopic=killstatistics"
 DATA_FILE = "watched.json"  # plik do przechowywania listy śledzonych postaci
@@ -58,7 +59,6 @@ WATCHED = load_watched()
 def is_player(killer):
     killer = killer.lower().strip()
     return not killer.startswith(("a ", "an ", "the "))
-
 
 def get_deaths():
     try:
@@ -137,6 +137,7 @@ async def check_loop():
                 await channel.send(msg)
                 last_seen.add(key)
 
+            # ograniczenie ostatnich 300 wpisów
             if len(last_seen) > 300:
                 last_seen = set(list(last_seen)[-300:])
 
@@ -181,15 +182,35 @@ async def on_message(message):
             save_watched()
             await message.channel.send(f"✅ Usunięto {nick} ze śledzonych postaci")
 
-# ------------------- Ready event z powiadomieniem startowym -------------------
+    # !lista – pokaż wszystkich w WATCHED
+    elif message.content.startswith('!lista'):
+        if not WATCHED:
+            await message.channel.send("Brak śledzonych postaci ❌")
+        else:
+            lista_postaci = "\n".join(f"🟢 {nick}" for nick in sorted(WATCHED))
+            await message.channel.send(f"**Śledzone postacie:**\n{lista_postaci}")
+
+    # !info – pokaż wszystkie komendy i opis
+    elif message.content.startswith('!info'):
+        komendy = (
+            "**Dostępne komendy bota:**\n"
+            "1. `!dodaj \"Nick\"` – dodaje postać do listy śledzonych\n"
+            "2. `!usun \"Nick\"` – usuwa postać ze śledzonych\n"
+            "3. `!lista` – pokazuje wszystkie śledzone postacie\n"
+            "4. `!info` – pokazuje wszystkie komendy i opis ich działania"
+        )
+        await message.channel.send(komendy)
+
+# ------------------- Ready event -------------------
 @client.event
 async def on_ready():
     print("Bot zalogowany jako", client.user)
     channel = client.get_channel(CHANNEL_ID)
     
     # Powiadomienie startowe
-    await channel.send("**Zgony v1.0.0** Rozpoczyna pracę.\nMonitoring Cylerii uruchomiony ✅")
+    await channel.send("**Zgony v1.2.0** Rozpoczyna pracę.\nMonitoring Cylerii uruchomiony ✅")
     
     client.loop.create_task(check_loop())
 
+# ------------------- Start bota -------------------
 client.run(DISCORD_TOKEN)
