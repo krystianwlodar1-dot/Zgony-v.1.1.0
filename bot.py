@@ -6,7 +6,7 @@ import json
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 
-# ------------------- Zmienne środowiskowe -------------------
+# ------------------- CONFIG -------------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 
@@ -23,20 +23,21 @@ client = discord.Client(intents=intents)
 
 last_seen = set()
 
-# ------------------- Link do postaci -------------------
+# ------------------- LINK BUILDER -------------------
 def character_link(name):
     safe = quote_plus(name)
-    return f"https://cyleria.pl/?subtopic=characters&name={safe}"
+    # <> blokuje generowanie embeda w Discordzie
+    return f"<https://cyleria.pl/?subtopic=characters&name={safe}>"
 
-# ------------------- Funkcje do persistencji -------------------
+# ------------------- WATCHED -------------------
 def load_watched():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return set(data)
+                return set(json.load(f))
         except:
-            print("Błąd wczytywania pliku watched.json")
+            print("Błąd wczytywania watched.json")
+
     return {
         "Agnieszka",
         "Miekka Parowka",
@@ -55,11 +56,11 @@ def save_watched():
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(list(WATCHED), f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("Błąd zapisu watched.json:", e)
+        print("Błąd zapisu:", e)
 
 WATCHED = load_watched()
 
-# ------------------- Logika -------------------
+# ------------------- PARSING -------------------
 def is_player(killer):
     killer = killer.lower().strip()
     return not killer.startswith(("a ", "an ", "the "))
@@ -68,13 +69,11 @@ def get_deaths():
     try:
         r = requests.get(URL, headers=HEADERS, timeout=15)
         if r.status_code != 200:
-            print("Cyleria HTTP:", r.status_code)
             return []
 
         soup = BeautifulSoup(r.text, "html.parser")
         tbody = soup.find("tbody")
         if not tbody:
-            print("Brak tbody – strona niedostępna?")
             return []
 
         deaths = []
@@ -87,33 +86,31 @@ def get_deaths():
             text = tds[1].get_text(" ", strip=True)
 
             if "śmierć na poziomie" in text:
-                parts = text.split("śmierć na poziomie")
-                name = parts[0].strip()
-                rest = parts[1].strip()
+                name, rest = text.split("śmierć na poziomie", 1)
+                name = name.strip()
                 if "przez" in rest:
-                    level_str, killer = rest.split("przez", 1)
+                    level, killer = rest.split("przez", 1)
                 else:
-                    level_str, killer = rest, "Nieznany"
-                level = level_str.strip()
-                killer = killer.strip()
+                    level, killer = rest, "Nieznany"
             else:
-                name = text.split("przez")[0].strip()
+                parts = text.split("przez")
+                name = parts[0].strip()
                 level = "?"
-                killer = text.split("przez")[1].strip() if "przez" in text else "Nieznany"
+                killer = parts[1].strip() if len(parts) > 1 else "Nieznany"
 
             if name not in WATCHED:
                 continue
 
             key = time + text
-            deaths.append((key, time, name, level, killer))
+            deaths.append((key, time, name, level.strip(), killer.strip()))
 
         return deaths
 
     except Exception as e:
-        print("Błąd połączenia z Cylerią:", e)
+        print("Błąd pobierania:", e)
         return []
 
-# ------------------- Pętla -------------------
+# ------------------- LOOP -------------------
 async def check_loop():
     global last_seen
     await client.wait_until_ready()
@@ -122,7 +119,7 @@ async def check_loop():
     for key, *_ in get_deaths():
         last_seen.add(key)
 
-    print("Monitor Cylerii uruchomiony")
+    print("Zgony v1.3 działa")
 
     while True:
         try:
@@ -134,27 +131,26 @@ async def check_loop():
                 victim_url = character_link(name)
                 killer_url = character_link(killer)
 
-                player_kill = is_player(killer)
-
                 msg = f"🕒 {time}\nZginął 🟢 **[{name}]({victim_url})** na poziomie {level} przez "
 
-                if player_kill:
+                if is_player(killer):
                     msg += f"🔴 **[{killer}]({killer_url})**"
                 else:
                     msg += killer
 
-                await channel.send(msg)
+                # suppress_embeds = 100% brak kart
+                await channel.send(msg, suppress_embeds=True)
                 last_seen.add(key)
 
             if len(last_seen) > 300:
                 last_seen = set(list(last_seen)[-300:])
 
         except Exception as e:
-            print("ERROR pętli:", e)
+            print("Loop error:", e)
 
         await asyncio.sleep(30)
 
-# ------------------- Komendy -------------------
+# ------------------- COMMANDS -------------------
 @client.event
 async def on_message(message):
     if message.author == client.user:
@@ -163,12 +159,12 @@ async def on_message(message):
     if message.content.startswith('!dodaj'):
         try:
             nick = message.content.split('"')[1].strip()
-        except IndexError:
-            await message.channel.send("Użyj: `!dodaj \"Nick\"`")
+        except:
+            await message.channel.send('Użyj: `!dodaj "Nick"`')
             return
 
         if nick in WATCHED:
-            await message.channel.send(f"{nick} już jest śledzony ✅")
+            await message.channel.send(f"{nick} już jest śledzony")
         else:
             WATCHED.add(nick)
             save_watched()
@@ -177,12 +173,12 @@ async def on_message(message):
     elif message.content.startswith('!usun'):
         try:
             nick = message.content.split('"')[1].strip()
-        except IndexError:
-            await message.channel.send("Użyj: `!usun \"Nick\"`")
+        except:
+            await message.channel.send('Użyj: `!usun "Nick"`')
             return
 
         if nick not in WATCHED:
-            await message.channel.send(f"{nick} nie jest śledzony ❌")
+            await message.channel.send(f"{nick} nie jest śledzony")
         else:
             WATCHED.remove(nick)
             save_watched()
@@ -190,26 +186,25 @@ async def on_message(message):
 
     elif message.content.startswith('!lista'):
         if not WATCHED:
-            await message.channel.send("Brak śledzonych postaci ❌")
+            await message.channel.send("Brak śledzonych postaci")
         else:
-            lista = "\n".join(f"🟢 {n}" for n in sorted(WATCHED))
-            await message.channel.send(f"**Śledzone postacie:**\n{lista}")
+            await message.channel.send("**Śledzone:**\n" + "\n".join(WATCHED))
 
     elif message.content.startswith('!info'):
         await message.channel.send(
-            "**Zgony v1.3 – komendy:**\n"
+            "**Zgony v1.3**\n"
             "`!dodaj \"Nick\"`\n"
             "`!usun \"Nick\"`\n"
             "`!lista`\n"
-            "`!info`"
+            "Nicki w alertach są klikalne, bez kart Cylerii."
         )
 
-# ------------------- Start -------------------
+# ------------------- START -------------------
 @client.event
 async def on_ready():
-    print("Bot zalogowany jako", client.user)
+    print("Zalogowany jako", client.user)
     channel = client.get_channel(CHANNEL_ID)
-    await channel.send("**Zgony v1.3** uruchomiony 🩸\nLinki do profili aktywne ✅")
+    await channel.send("🩸 **Zgony v1.3 uruchomiony**\nLinki aktywne, embedy wyłączone.")
     client.loop.create_task(check_loop())
 
 client.run(DISCORD_TOKEN)
