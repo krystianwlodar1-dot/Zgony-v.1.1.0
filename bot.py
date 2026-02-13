@@ -4,13 +4,14 @@ import requests
 import asyncio
 import json
 from bs4 import BeautifulSoup
+from urllib.parse import quote_plus
 
 # ------------------- Zmienne środowiskowe -------------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # możesz tu później dodać listę kanałów, jeśli chcesz
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 
 URL = "https://cyleria.pl/?subtopic=killstatistics"
-DATA_FILE = "watched.json"  # plik do przechowywania listy śledzonych postaci
+DATA_FILE = "watched.json"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (CyleriaBot; Discord death tracker)"
@@ -22,6 +23,11 @@ client = discord.Client(intents=intents)
 
 last_seen = set()
 
+# ------------------- Link do postaci -------------------
+def character_link(name):
+    safe = quote_plus(name)
+    return f"https://cyleria.pl/?subtopic=characters&name={safe}"
+
 # ------------------- Funkcje do persistencji -------------------
 def load_watched():
     if os.path.exists(DATA_FILE):
@@ -31,7 +37,6 @@ def load_watched():
                 return set(data)
         except:
             print("Błąd wczytywania pliku watched.json")
-    # defaultowe postacie
     return {
         "Agnieszka",
         "Miekka Parowka",
@@ -52,10 +57,9 @@ def save_watched():
     except Exception as e:
         print("Błąd zapisu watched.json:", e)
 
-# ------------------- Zmienna globalna -------------------
 WATCHED = load_watched()
 
-# ------------------- Funkcje monitorowania -------------------
+# ------------------- Logika -------------------
 def is_player(killer):
     killer = killer.lower().strip()
     return not killer.startswith(("a ", "an ", "the "))
@@ -109,7 +113,7 @@ def get_deaths():
         print("Błąd połączenia z Cylerią:", e)
         return []
 
-# ------------------- Pętla monitorowania -------------------
+# ------------------- Pętla -------------------
 async def check_loop():
     global last_seen
     await client.wait_until_ready()
@@ -127,17 +131,21 @@ async def check_loop():
                 if key in last_seen:
                     continue
 
+                victim_url = character_link(name)
+                killer_url = character_link(killer)
+
                 player_kill = is_player(killer)
-                msg = f"🕒 {time}\nZginął 🟢 **{name}** na poziomie {level} przez "
+
+                msg = f"🕒 {time}\nZginął 🟢 **[{name}]({victim_url})** na poziomie {level} przez "
+
                 if player_kill:
-                    msg += f"🔴 **{killer}**"
+                    msg += f"🔴 **[{killer}]({killer_url})**"
                 else:
                     msg += killer
 
                 await channel.send(msg)
                 last_seen.add(key)
 
-            # ograniczenie ostatnich 300 wpisów
             if len(last_seen) > 300:
                 last_seen = set(list(last_seen)[-300:])
 
@@ -146,71 +154,62 @@ async def check_loop():
 
         await asyncio.sleep(30)
 
-# ------------------- Komendy Discord -------------------
+# ------------------- Komendy -------------------
 @client.event
 async def on_message(message):
     if message.author == client.user:
         return
 
-    # !dodaj "Nick"
     if message.content.startswith('!dodaj'):
         try:
             nick = message.content.split('"')[1].strip()
         except IndexError:
-            await message.channel.send("Błąd: użyj formatu `!dodaj \"Nick Postaci\"`")
+            await message.channel.send("Użyj: `!dodaj \"Nick\"`")
             return
 
         if nick in WATCHED:
-            await message.channel.send(f"{nick} już jest w śledzonych postaciach ✅")
+            await message.channel.send(f"{nick} już jest śledzony ✅")
         else:
             WATCHED.add(nick)
             save_watched()
-            await message.channel.send(f"✅ Dodano {nick} do śledzonych postaci")
+            await message.channel.send(f"✅ Dodano {nick}")
 
-    # !usun "Nick"
     elif message.content.startswith('!usun'):
         try:
             nick = message.content.split('"')[1].strip()
         except IndexError:
-            await message.channel.send("Błąd: użyj formatu `!usun \"Nick Postaci\"`")
+            await message.channel.send("Użyj: `!usun \"Nick\"`")
             return
 
         if nick not in WATCHED:
-            await message.channel.send(f"{nick} nie znajduje się w śledzonych postaciach ❌")
+            await message.channel.send(f"{nick} nie jest śledzony ❌")
         else:
             WATCHED.remove(nick)
             save_watched()
-            await message.channel.send(f"✅ Usunięto {nick} ze śledzonych postaci")
+            await message.channel.send(f"✅ Usunięto {nick}")
 
-    # !lista – pokaż wszystkich w WATCHED
     elif message.content.startswith('!lista'):
         if not WATCHED:
             await message.channel.send("Brak śledzonych postaci ❌")
         else:
-            lista_postaci = "\n".join(f"🟢 {nick}" for nick in sorted(WATCHED))
-            await message.channel.send(f"**Śledzone postacie:**\n{lista_postaci}")
+            lista = "\n".join(f"🟢 {n}" for n in sorted(WATCHED))
+            await message.channel.send(f"**Śledzone postacie:**\n{lista}")
 
-    # !info – pokaż wszystkie komendy i opis
     elif message.content.startswith('!info'):
-        komendy = (
-            "**Dostępne komendy bota:**\n"
-            "1. `!dodaj \"Nick\"` – dodaje postać do listy śledzonych\n"
-            "2. `!usun \"Nick\"` – usuwa postać ze śledzonych\n"
-            "3. `!lista` – pokazuje wszystkie śledzone postacie\n"
-            "4. `!info` – pokazuje wszystkie komendy i opis ich działania"
+        await message.channel.send(
+            "**Zgony v1.3 – komendy:**\n"
+            "`!dodaj \"Nick\"`\n"
+            "`!usun \"Nick\"`\n"
+            "`!lista`\n"
+            "`!info`"
         )
-        await message.channel.send(komendy)
 
-# ------------------- Ready event -------------------
+# ------------------- Start -------------------
 @client.event
 async def on_ready():
     print("Bot zalogowany jako", client.user)
     channel = client.get_channel(CHANNEL_ID)
-    
-    # Powiadomienie startowe
-    await channel.send("**Zgony v1.2.0** Rozpoczyna pracę.\nMonitoring Cylerii uruchomiony ✅")
-    
+    await channel.send("**Zgony v1.3** uruchomiony 🩸\nLinki do profili aktywne ✅")
     client.loop.create_task(check_loop())
 
-# ------------------- Start bota -------------------
 client.run(DISCORD_TOKEN)
